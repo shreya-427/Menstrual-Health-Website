@@ -2,7 +2,9 @@
  * SettingsPage — theme, AI consent, data export, data deletion, dev tools.
  */
 import { useState, useEffect } from 'react'
-import { getPreferences, savePreferences, getAllData, clearAllData } from '../services/storageService.js'
+import { getPreferences, savePreferences, getAllData, clearAllData,
+         getHealthProfile, saveHealthProfile, clearHealthProfile } from '../services/storageService.js'
+import HealthProfileSection from '../components/settings/HealthProfileSection.jsx'
 
 // ── AI Consent Modal ──────────────────────────────────────────────────────────
 function ConsentModal({ onAccept, onDecline }) {
@@ -40,6 +42,7 @@ function ConsentModal({ onAccept, onDecline }) {
 
 export default function SettingsPage() {
   const [prefs,          setPrefs]          = useState({ aiConsentGranted: false, themePreference: 'light' })
+  const [profile,        setProfile]        = useState(null)
   const [showModal,      setShowModal]      = useState(false)
   const [deleteConfirm,  setDeleteConfirm]  = useState(false)
   const [statusMsg,      setStatusMsg]      = useState('')
@@ -47,6 +50,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     getPreferences().then(setPrefs)
+    getHealthProfile().then(setProfile)
   }, [])
 
   function flash(msg) {
@@ -105,6 +109,20 @@ export default function SettingsPage() {
     flash('All data deleted from this browser. Exported files remain outside this app\'s control.')
   }
 
+  // ── Health profile ───────────────────────────────────────────────────────────
+
+  async function handleSaveProfile(payload) {
+    await saveHealthProfile(payload)
+    setProfile(prev => ({ ...(prev ?? {}), ...payload }))
+    flash('Profile saved.')
+  }
+
+  async function handleClearProfile() {
+    await clearHealthProfile()
+    setProfile({ age: null, heightCm: null, weightKg: null, activityLevel: null })
+    flash('Profile data cleared.')
+  }
+
   // ── Demo data (dev only) ────────────────────────────────────────────────────
 
   async function handleLoadDemo() {
@@ -152,6 +170,15 @@ export default function SettingsPage() {
           Toggle light/dark mode using the ☀️ / 🌙 button in the navigation bar.
         </p>
       </div>
+
+      {/* Personal health profile */}
+      {profile !== null && (
+        <HealthProfileSection
+          profile={profile}
+          onSave={handleSaveProfile}
+          onClear={handleClearProfile}
+        />
+      )}
 
       {/* Security — not yet active */}
       <div className="card space-y-3">

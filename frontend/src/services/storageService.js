@@ -45,6 +45,16 @@
  *   aiConsentGranted: boolean,
  *   themePreference: 'light' | 'dark'
  * }
+ *
+ * HealthProfile {
+ *   age:           number | null,    — integer years (10–120)
+ *   heightCm:      number | null,    — centimetres (canonical unit)  ← ENCRYPT THIS FIELD
+ *   weightKg:      number | null,    — kilograms (canonical unit)    ← ENCRYPT THIS FIELD
+ *   activityLevel: 'sedentary' | 'light' | 'moderate' | 'very_active' | 'extremely_active' | null,
+ *   updatedAt:     string (ISO)
+ * }
+ * Stored in metric regardless of the unit the user chose in the UI.
+ * UI layer converts for display; this keeps the schema simple for future encryption.
  */
 
 import localforage from 'localforage'
@@ -54,6 +64,7 @@ const KEYS = {
   CYCLE_ENTRIES:  'cycleEntries',
   SYMPTOM_LOGS:   'symptomLogs',
   PREFERENCES:    'userPreferences',
+  HEALTH_PROFILE: 'healthProfile',
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -168,6 +179,32 @@ export async function savePreferences(partial) {
   await localforage.setItem(KEYS.PREFERENCES, { ...current, ...partial })
 }
 
+// ── Health profile ────────────────────────────────────────────────────────────
+
+const DEFAULT_HEALTH_PROFILE = {
+  age:           null,
+  heightCm:      null,
+  weightKg:      null,
+  activityLevel: null,
+}
+
+export async function getHealthProfile() {
+  const profile = await localforage.getItem(KEYS.HEALTH_PROFILE)
+  // DECRYPT AFTER READ — decrypt heightCm and weightKg when encryption is active
+  return { ...DEFAULT_HEALTH_PROFILE, ...(profile ?? {}) }
+}
+
+export async function saveHealthProfile(partial) {
+  const current = await getHealthProfile()
+  const updated = { ...current, ...partial, updatedAt: new Date().toISOString() }
+  // ENCRYPT BEFORE WRITE — encrypt heightCm and weightKg when encryption is active
+  await localforage.setItem(KEYS.HEALTH_PROFILE, updated)
+}
+
+export async function clearHealthProfile() {
+  await localforage.removeItem(KEYS.HEALTH_PROFILE)
+}
+
 // ── Bulk operations ───────────────────────────────────────────────────────────
 
 export async function getAllData() {
@@ -183,5 +220,6 @@ export async function clearAllData() {
     localforage.removeItem(KEYS.CYCLE_ENTRIES),
     localforage.removeItem(KEYS.SYMPTOM_LOGS),
     localforage.removeItem(KEYS.PREFERENCES),
+    localforage.removeItem(KEYS.HEALTH_PROFILE),
   ])
 }
