@@ -1,0 +1,24 @@
+﻿# Dependencies
+node_modules/
+frontend/node_modules/
+
+# Build output
+frontend/dist/
+frontend/.vite/
+
+# Environment files (never commit secrets)
+.env
+frontend/.env
+backend/.env
+
+# Python
+__pycache__/
+venv/
+.venv/
+
+# ChromaDB
+backend/knowledge/
+
+# OS
+.DS_Store
+Thumbs.db

@@ -436,7 +436,7 @@ The engine requires **at least two `CycleEntry` records with `startDate` values*
    - Remaining days through predicted start: `luteal`
    - If `weightedMeanCycleLength` is null: `unknown`
 
-   **Mid-cycle is computed as half of `weightedMeanCycleLength`, not a fixed day 14.** This avoids the incorrect assumption that ovulation occurs on day 14 in all cycles.
+   **Ovulation timing is not predicted.** The `ovulatory_estimated` phase label is a broad educational approximation only — it is not presented as a reliable individualized prediction. The phase window is a rough mid-cycle region based on the user's average cycle length, included solely for educational context. It must never be used to infer fertile windows for contraception or pregnancy planning. The primary purpose of the prediction engine is to estimate the next period start date; ovulation information is secondary and highly approximate.
 
 10. **Missing `endDate`** — excluded from `averagePeriodDuration` calculation only. Does not affect predicted start date.
 
