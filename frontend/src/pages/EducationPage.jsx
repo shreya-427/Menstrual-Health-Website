@@ -78,9 +78,10 @@ export default function EducationPage() {
       {/* AI chat */}
       <div className="card space-y-4">
         <div>
-          <p className="section-heading">Ask a health question</p>
+          <p className="section-heading">Ask About Health &amp; Privacy</p>
           <p className="text-xs text-brand-muted dark:text-brand-muted-dark">
-            General educational questions only. Not a substitute for professional medical advice.
+            Ask general menstrual health questions or about how we protect your data.
+            This assistant does not give medical advice — talk to a healthcare provider about your own health.
           </p>
         </div>
         <ConsentGate consentGranted={consentGranted} />

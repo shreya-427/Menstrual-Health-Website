@@ -233,6 +233,9 @@ SCOPE:
   that question to the Health Assistant or speak with a healthcare provider."
 - If you genuinely cannot answer a question from the provided document, say so
   and suggest the user contact support for further help.
+
+CONCISE ANSWERS: Give a short, direct answer first (3 to 6 sentences). Add detail
+only if the question specifically asks for it. Avoid lengthy preambles.
 """
 
 

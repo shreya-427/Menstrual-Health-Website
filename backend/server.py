@@ -1,8 +1,8 @@
 """
 server.py — HTTP bridge between the React frontend and the three-agent system.
 
-Exposes POST /api/ask with the exact shape the frontend's aiService.js expects:
-    request : {"question": "..."}
+Exposes POST /api/ask with the shape the frontend's aiService.js expects:
+    request : {"question": "...", "history": [{"role": "user"|"assistant", "content": "..."}, ...]}
     response: {"answer": "...", "sources": [{"title": "...", "url": "..."}]}
 
 Errors use plain HTTP status codes (400, 429, 5xx); the frontend maps them to
@@ -11,9 +11,10 @@ friendly messages.
 Run:
     cd backend
     pip install -r requirements.txt
-    uvicorn server:app --port 8000 --reload
+    py -3.10 -m uvicorn server:app --port 8000 --reload
 """
 
+import logging
 import os
 import sys
 import time
@@ -31,8 +32,16 @@ from pydantic import BaseModel
 
 from supervisor_agent import ask_supervisor  # noqa: E402
 
-MAX_QUESTION_LENGTH = 500  # matches the frontend's limit
-RATE_LIMIT = 20            # requests per window, per client IP
+# ── Logging ─────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+log = logging.getLogger(__name__)
+
+MAX_QUESTION_LENGTH = 500   # matches the frontend's limit
+MAX_HISTORY_MESSAGES = 10   # max history items accepted from client
+RATE_LIMIT = 20             # requests per window, per client IP
 RATE_WINDOW_SECONDS = 60
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
@@ -52,8 +61,14 @@ _client = OpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
 _hits: dict[str, deque] = defaultdict(deque)
 
 
+class HistoryMessage(BaseModel):
+    role: str      # "user" or "assistant"
+    content: str
+
+
 class AskRequest(BaseModel):
     question: str
+    history: list[HistoryMessage] = []
 
 
 class Source(BaseModel):
@@ -84,20 +99,35 @@ def health() -> dict:
 # Plain `def` so FastAPI runs the blocking LLM calls in a worker thread.
 @app.post("/api/ask", response_model=AskResponse)
 def ask(body: AskRequest, request: Request) -> AskResponse:
-    _check_rate_limit(request.client.host if request.client else "unknown")
+    ip = request.client.host if request.client else "unknown"
+    _check_rate_limit(ip)
 
     question = body.question.strip()
     if not question or len(question) > MAX_QUESTION_LENGTH:
         raise HTTPException(status_code=400, detail="Invalid question length")
 
-    try:
-        answer = ask_supervisor(question, _client)
-    except APIConnectionError:
-        # Ollama isn't running / unreachable
-        raise HTTPException(status_code=503, detail="Model server unavailable")
-    except Exception:
-        # Don't leak internals (or the user's question) in the error body.
-        raise HTTPException(status_code=500, detail="Internal error")
+    # Sanitise and cap history from the client
+    history = [
+        {"role": m.role, "content": m.content}
+        for m in body.history[:MAX_HISTORY_MESSAGES]
+        if m.role in ("user", "assistant") and m.content.strip()
+    ]
 
-    # The agents return plain text only; sources are an empty array for now.
-    return AskResponse(answer=answer, sources=[])
+    log.info("Q [%s] history=%d turns: %r", ip, len(history), question[:80])
+
+    # One automatic retry on unexpected exceptions (not on rate-limit or bad input).
+    for attempt in (1, 2):
+        try:
+            answer = ask_supervisor(question, _client, history=history)
+            log.info("A [%s] attempt=%d len=%d", ip, attempt, len(answer))
+            return AskResponse(answer=answer, sources=[])
+        except APIConnectionError as exc:
+            log.error("Ollama unreachable (attempt %d): %s", attempt, exc)
+            if attempt == 2:
+                raise HTTPException(status_code=503, detail="Model server unavailable")
+        except Exception as exc:
+            log.exception("ask_supervisor failed (attempt %d): %s", attempt, exc)
+            if attempt == 2:
+                raise HTTPException(status_code=500, detail="Internal error")
+        # Short pause before retry
+        time.sleep(0.5)

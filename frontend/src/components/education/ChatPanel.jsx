@@ -30,16 +30,32 @@ function friendlyError(err) {
 const SUGGESTED_QUESTIONS = [
   'What is a normal cycle length?',
   'What causes menstrual cramps?',
-  'What is PMS?',
+  'What is PCOS?',
+  'Can the company see my period dates?',
   'When should I see a doctor about my period?',
 ]
 
+const GREETING = {
+  role: 'assistant',
+  content: `Hi! I can help with two things:
+
+**Menstrual health education** — general questions about cycles, periods, ovulation, PMS, PCOS, endometriosis, menopause, and more.
+
+**App privacy & data policy** — questions about how this app stores and protects your data.
+
+Please note: I provide general educational information only and cannot give medical advice. For questions about your own health, symptoms, or treatment, please talk to a healthcare provider.
+
+What would you like to know?`,
+  sources: [],
+}
+
 export default function ChatPanel() {
-  const [messages, setMessages] = useState([])
+  const [messages, setMessages] = useState([GREETING])
   const [input,    setInput]    = useState('')
   const [loading,  setLoading]  = useState(false)
   const [error,    setError]    = useState('')
-  const bottomRef = useRef(null)
+  const bottomRef        = useRef(null)
+  const _pendingHistory  = useRef([])   // history snapshot captured just before each send
 
   // Scroll to newest message
   useEffect(() => {
@@ -52,14 +68,30 @@ export default function ChatPanel() {
 
     setError('')
     setInput('')
-    setMessages(prev => [...prev, { role: 'user', content: question, sources: [] }])
+
+    // Snapshot history BEFORE adding the new user message.
+    // Exclude the synthetic greeting (it is not a real server turn).
+    // Only send role+content — strip the sources field the backend doesn't need.
+    setMessages(prev => {
+      const historySnapshot = prev
+        .filter(m => m !== GREETING)
+        .map(({ role, content }) => ({ role, content }))
+
+      // Fire the API call inside the state updater so historySnapshot is current.
+      // We use a ref-free approach: capture it here and call async outside.
+      _pendingHistory.current = historySnapshot
+      return [...prev, { role: 'user', content: question, sources: [] }]
+    })
+
     setLoading(true)
 
     try {
-      const response = await askQuestion(question)
+      const response = await askQuestion(question, _pendingHistory.current)
+      // Strip hidden routing tags the supervisor embeds for follow-up detection
+      const cleanAnswer = response.answer.replace(/<!--\s*route:\w+\s*-->/g, '').trim()
       setMessages(prev => [...prev, {
         role: 'assistant',
-        content: response.answer,
+        content: cleanAnswer,
         sources: response.sources ?? [],
       }])
     } catch (err) {
@@ -79,8 +111,8 @@ export default function ChatPanel() {
       {/* Disclaimer — always visible, non-dismissable */}
       <ChatDisclaimer />
 
-      {/* Suggested questions — shown only when no messages yet */}
-      {messages.length === 0 && (
+      {/* Suggested questions — shown only when only the greeting is showing */}
+      {messages.length === 1 && messages[0] === GREETING && (
         <div className="space-y-2">
           <p className="text-xs text-brand-muted dark:text-brand-muted-dark font-medium">Suggested questions:</p>
           <div className="flex flex-wrap gap-2">
@@ -128,7 +160,7 @@ export default function ChatPanel() {
           type="text"
           value={input}
           onChange={e => setInput(e.target.value)}
-          placeholder="Ask a menstrual health question…"
+          placeholder="Ask about menstrual health or how we protect your data…"
           maxLength={500}
           disabled={loading}
           aria-label="Type your question"
