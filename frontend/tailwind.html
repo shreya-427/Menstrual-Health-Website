@@ -1,0 +1,38 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  // Enable class-based dark mode — toggled by adding 'dark' class to <html>
+  darkMode: 'class',
+  content: [
+    './index.html',
+    './src/**/*.{js,jsx}',
+  ],
+  theme: {
+    extend: {
+      colors: {
+        brand: {
+          pink:    '#f4a7b9',
+          'pink-dark': '#e07a95',
+          purple:  '#f9d4de',
+          'purple-dark': '#e8a8ba',
+          teal:    '#f4a7b9',
+          'teal-dark': '#e07a95',
+          light:   '#fff5f7',
+          dark:    '#2a1018',
+          card:    '#ffffff',
+          'card-dark': '#3a1a24',
+          muted:   '#9e7280',
+          'muted-dark': '#c4a0ae',
+        },
+      },
+      fontFamily: {
+        sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+      },
+      borderRadius: {
+        xl:  '1rem',
+        '2xl': '1.25rem',
+        '3xl': '1.5rem',
+      },
+    },
+  },
+  plugins: [],
+}
