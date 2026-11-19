@@ -1,0 +1,204 @@
+/**
+ * encryptionService.js
+ *
+ * WebCrypto-based AES-GCM encryption for local health data.
+ *
+ * Key derivation:
+ *   - PBKDF2 with SHA-256, 310 000 iterations (OWASP 2023 recommendation)
+ *   - Random 16-byte salt stored in IndexedDB alongside the data
+ *   - Produces a 256-bit AES-GCM CryptoKey (non-extractable)
+ *
+ * Encryption:
+ *   - AES-GCM with a fresh random 12-byte IV per operation
+ *   - Ciphertext format stored as a plain object: { iv, salt, data }
+ *     where iv, salt, data are Base64 strings
+ *   - The salt is only written during key derivation; individual encrypt()
+ *     calls receive the already-derived CryptoKey and generate a fresh IV.
+ *
+ * Passphrase verification:
+ *   - A small known sentinel ("ok") is encrypted with the derived key and
+ *     stored in IndexedDB under SENTINEL_KEY.
+ *   - On unlock, we attempt to decrypt it. Failure means wrong passphrase.
+ *
+ * Session:
+ *   - The CryptoKey lives only in JS memory. It is never persisted.
+ *   - Closing/refreshing the tab clears the key → user must re-enter passphrase.
+ */
+
+import localforage from 'localforage'
+
+// ── Storage keys ────────────────────────────────────────────────────────────
+const SALT_KEY     = '__enc_salt__'
+const SENTINEL_KEY = '__enc_sentinel__'
+const SENTINEL_PLAINTEXT = 'menstrual-health-app-ok'
+
+// ── PBKDF2 parameters ────────────────────────────────────────────────────────
+const PBKDF2_ITERATIONS = 310_000
+const PBKDF2_HASH       = 'SHA-256'
+const KEY_LENGTH_BITS   = 256
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function bufToB64(buf) {
+  return btoa(String.fromCharCode(...new Uint8Array(buf)))
+}
+
+function b64ToBuf(b64) {
+  const binary = atob(b64)
+  const bytes  = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes.buffer
+}
+
+// ── Key derivation ────────────────────────────────────────────────────────────
+
+/**
+ * deriveKey(passphrase, salt?)
+ *
+ * Derives a non-extractable AES-GCM CryptoKey from a passphrase via PBKDF2.
+ * If `salt` is omitted a new random salt is generated and persisted.
+ * Returns { key: CryptoKey, salt: ArrayBuffer }.
+ */
+async function deriveKey(passphrase, salt = null) {
+  const enc = new TextEncoder()
+
+  // Import the raw passphrase bytes as a PBKDF2 key
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey'],
+  )
+
+  // Use provided salt or generate a new one
+  const saltBuf = salt ?? crypto.getRandomValues(new Uint8Array(16)).buffer
+
+  const key = await crypto.subtle.deriveKey(
+    {
+      name:       'PBKDF2',
+      salt:       saltBuf,
+      iterations: PBKDF2_ITERATIONS,
+      hash:       PBKDF2_HASH,
+    },
+    keyMaterial,
+    { name: 'AES-GCM', length: KEY_LENGTH_BITS },
+    false,   // non-extractable
+    ['encrypt', 'decrypt'],
+  )
+
+  return { key, salt: saltBuf }
+}
+
+// ── Encrypt / Decrypt ─────────────────────────────────────────────────────────
+
+/**
+ * encrypt(plaintext, key) → { iv, data } object (both Base64)
+ * `plaintext` can be a string, number, boolean, or plain object — will be JSON-serialised.
+ */
+export async function encrypt(plaintext, key) {
+  const iv  = crypto.getRandomValues(new Uint8Array(12))
+  const enc = new TextEncoder()
+  const payload = typeof plaintext === 'string' ? plaintext : JSON.stringify(plaintext)
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    enc.encode(payload),
+  )
+  return {
+    iv:   bufToB64(iv.buffer),
+    data: bufToB64(cipherBuf),
+  }
+}
+
+/**
+ * decrypt(cipherObj, key) → original plaintext (string)
+ * `cipherObj` is { iv, data } as returned by encrypt().
+ */
+export async function decrypt(cipherObj, key) {
+  const iv        = new Uint8Array(b64ToBuf(cipherObj.iv))
+  const cipherBuf = b64ToBuf(cipherObj.data)
+  const dec       = new TextDecoder()
+  const plainBuf  = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    cipherBuf,
+  )
+  return dec.decode(plainBuf)
+}
+
+// ── Passphrase setup (first run) ──────────────────────────────────────────────
+
+/**
+ * setupPassphrase(passphrase)
+ *
+ * Called the FIRST time a user sets their passphrase.
+ * Derives a key, stores the salt, encrypts the sentinel, persists it.
+ * Returns the CryptoKey for immediate use.
+ */
+export async function setupPassphrase(passphrase) {
+  const { key, salt } = await deriveKey(passphrase)
+  await localforage.setItem(SALT_KEY, bufToB64(salt))
+  const sentinel = await encrypt(SENTINEL_PLAINTEXT, key)
+  await localforage.setItem(SENTINEL_KEY, sentinel)
+  return key
+}
+
+// ── Passphrase unlock (returning user) ────────────────────────────────────────
+
+/**
+ * unlockWithPassphrase(passphrase)
+ *
+ * Derives the key from the stored salt, then attempts to decrypt the sentinel.
+ * Returns the CryptoKey on success.
+ * Throws Error('wrong_passphrase') on mismatch.
+ * Throws Error('not_set_up') if no salt/sentinel found (first-run case).
+ */
+export async function unlockWithPassphrase(passphrase) {
+  const saltB64 = await localforage.getItem(SALT_KEY)
+  if (!saltB64) throw new Error('not_set_up')
+
+  const salt = b64ToBuf(saltB64)
+  const { key } = await deriveKey(passphrase, salt)
+
+  const sentinel = await localforage.getItem(SENTINEL_KEY)
+  if (!sentinel) throw new Error('not_set_up')
+
+  try {
+    const result = await decrypt(sentinel, key)
+    if (result !== SENTINEL_PLAINTEXT) throw new Error('wrong_passphrase')
+  } catch (e) {
+    if (e.message === 'wrong_passphrase') throw e
+    // WebCrypto throws a generic OperationError on bad key/iv — map it
+    throw new Error('wrong_passphrase')
+  }
+
+  return key
+}
+
+/**
+ * isPassphraseSet()
+ *
+ * Returns true if a passphrase has previously been set up (salt exists in storage).
+ */
+export async function isPassphraseSet() {
+  const salt = await localforage.getItem(SALT_KEY)
+  return salt !== null
+}
+
+/**
+ * changePassphrase(currentKey, newPassphrase, reEncryptFn)
+ *
+ * Re-derives a new key from `newPassphrase`, then calls `reEncryptFn(oldKey, newKey)`
+ * so the caller can re-encrypt all stored data before the old key is discarded.
+ * Updates the stored salt and sentinel.
+ * Returns the new CryptoKey.
+ */
+export async function changePassphrase(currentKey, newPassphrase, reEncryptFn) {
+  const { key: newKey, salt } = await deriveKey(newPassphrase)
+  await reEncryptFn(currentKey, newKey)
+  await localforage.setItem(SALT_KEY, bufToB64(salt))
+  const sentinel = await encrypt(SENTINEL_PLAINTEXT, newKey)
+  await localforage.setItem(SENTINEL_KEY, sentinel)
+  return newKey
+}
