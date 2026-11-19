@@ -2,25 +2,64 @@
  * MonthCalendar — interactive monthly grid calendar.
  *
  * Props:
- *   cycleEntries    CycleEntry[]
- *   symptomLogs     SymptomLog[]
- *   predictedDates  Date[]         — from prediction engine (Phase 3); [] until then
- *   onSelectDay     (Date) => void
- *   selectedDay     Date | null
+ *   cycleEntries      CycleEntry[]
+ *   symptomLogs       SymptomLog[]
+ *   predictedDates    Date[]           — from prediction engine; [] until then
+ *   predictionResult  PredictionResult — for per-day phase coloring
+ *   onSelectDay       (Date) => void
+ *   selectedDay       Date | null
  */
 import { useState } from 'react'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval,
   getDay, isSameDay, isSameMonth, parseISO, format,
+  differenceInCalendarDays,
 } from 'date-fns'
 import DayCell from './DayCell.jsx'
 
 const DAY_HEADERS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
+/**
+ * Returns the cycle phase for a given day based on the prediction result.
+ * Mirrors the phase logic in predictionEngine.js but for any arbitrary date.
+ */
+function getDayPhase(day, predictionResult) {
+  const {
+    weightedMeanCycleLength: wMean,
+    averagePeriodDuration: avgDuration,
+    stdDevCycleLength: sd,
+  } = predictionResult
+
+  if (!wMean || !avgDuration) return null
+
+  // Find the most recent cycle start at or before this day
+  // by working from the prediction result's mostRecentStart (predictedStart - wMean)
+  const { predictedStartDate } = predictionResult
+  if (!predictedStartDate) return null
+
+  const mostRecentStart = new Date(predictedStartDate.getTime() - Math.round(wMean) * 86400000)
+  const daysSince = differenceInCalendarDays(day, mostRecentStart)
+  if (daysSince < 0) return null
+
+  const cycleDay = daysSince + 1
+  const midCycle = Math.round(wMean / 2)
+  const ovulatoryLow  = midCycle - 2
+  const ovulatoryHigh = midCycle + 2
+
+  // If day is too far past the expected next start, don't guess a phase
+  if (daysSince >= Math.round(wMean) + Math.round(sd ?? 0) + 5) return null
+
+  if (cycleDay <= avgDuration)       return 'menstrual'
+  if (cycleDay < ovulatoryLow)       return 'follicular'
+  if (cycleDay <= ovulatoryHigh)     return 'ovulatory_estimated'
+  return 'luteal'
+}
+
 export default function MonthCalendar({
   cycleEntries = [],
   symptomLogs  = [],
   predictedDates = [],
+  predictionResult = {},
   onSelectDay,
   selectedDay,
 }) {
@@ -119,14 +158,16 @@ export default function MonthCalendar({
         {/* Actual days */}
         {daysInMonth.map(day => {
           const iso = format(day, 'yyyy-MM-dd')
+          const isPeriod = periodDaySet.has(iso)
           return (
             <DayCell
               key={iso}
               day={day}
               isToday={isSameDay(day, today)}
-              isPeriod={periodDaySet.has(iso)}
+              isPeriod={isPeriod}
               isPredicted={predictedDaySet.has(iso)}
               hasSymptom={symptomDaySet.has(iso)}
+              phase={isPeriod ? 'menstrual' : getDayPhase(day, predictionResult)}
               isSelected={selectedDay ? isSameDay(day, selectedDay) : false}
               onClick={() => onSelectDay?.(day)}
             />

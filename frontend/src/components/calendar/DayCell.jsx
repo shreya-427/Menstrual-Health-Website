@@ -7,15 +7,25 @@
  *   isPeriod      boolean       — recorded period day
  *   isPredicted   boolean       — predicted period day
  *   hasSymptom    boolean       — symptom log exists for this day
+ *   phase         string | null — 'menstrual' | 'follicular' | 'ovulatory_estimated' | 'luteal' | null
  *   isSelected    boolean
  *   onClick       () => void
  */
+
+const PHASE_BG = {
+  menstrual:           'bg-brand-pink/15',
+  follicular:          'bg-brand-teal/10',
+  ovulatory_estimated: 'bg-brand-purple/10',
+  luteal:              'bg-brand-purple/5',
+}
+
 export default function DayCell({
   day,
   isToday,
   isPeriod,
   isPredicted,
   hasSymptom,
+  phase,
   isSelected,
   onClick,
 }) {
@@ -36,10 +46,13 @@ export default function DayCell({
         'text-sm transition-colors aspect-square select-none',
         // Selected ring
         isSelected ? 'ring-2 ring-brand-purple ring-offset-1' : '',
-        // Today highlight
+        // Today highlight (takes precedence over phase bg)
         isToday
           ? 'bg-brand-purple/10 font-bold text-brand-purple dark:text-brand-purple'
-          : 'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-200',
+          : [
+              phase && PHASE_BG[phase] ? PHASE_BG[phase] : '',
+              'hover:bg-gray-50 dark:hover:bg-white/5 text-gray-700 dark:text-gray-200',
+            ].join(' '),
       ].join(' ')}
     >
       <span>{dayNum}</span>
