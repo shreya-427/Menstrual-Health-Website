@@ -60,6 +60,7 @@ export default function CalendarPage() {
           cycleEntries={entries}
           symptomLogs={logs}
           predictedDates={predictedDates}
+          predictionResult={result}
           selectedDay={selectedDay}
           onSelectDay={setSelectedDay}
         />
