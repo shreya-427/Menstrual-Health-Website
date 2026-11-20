@@ -23,10 +23,20 @@ Menstrual-Health-App/
 │       ├── logic/                ← Pure JavaScript modules (no React)
 │       ├── services/             ← Data access and external API abstraction
 │       └── data/                 ← Static data files
+├── backend/                      ← Python/FastAPI AI backend
+│   ├── server.py                 ← HTTP bridge (rate limiting, CORS, retries)
+│   ├── requirements.txt
+│   └── agents/
+│       ├── supervisor_agent.py   ← routes questions to correct sub-agent
+│       ├── health_agent.py       ← menstrual health knowledge base (~900 lines)
+│       ├── policy_agent.py       ← privacy/data-policy questions
+│       ├── main.py               ← test harness + interactive CLI
+│       ├── conversation_tests.py ← 9 multi-turn conversation test scenarios
+│       └── timing_test.py        ← latency measurement tool
 └── .gitignore
 ```
 
-The `backend/` directory (FastAPI credential proxy for IBM watsonx) has not yet been implemented. See [integration-guide.md](integration-guide.md).
+See [backend.md](backend.md) for full backend documentation.
 
 ---
 
@@ -58,6 +68,7 @@ Components are grouped into subdirectories matching their primary page. A few (l
 | `insights/` | `StatCard`, `CycleLengthChart`, `SymptomFreqChart`, `TemplateSummary` |
 | `education/` | `TopicCard`, `TopicDetailView`, `ChatPanel`, `ChatMessage`, `ChatDisclaimer`, `ConsentGate` |
 | `settings/` | `HealthProfileSection` |
+| *(root)* | `PassphraseGate` — full-screen passphrase overlay (setup / unlock / change modes) |
 
 ### `src/hooks/`
 
@@ -80,6 +91,7 @@ Contains `predictionEngine.js` — a pure JavaScript module. It has no React dep
 |---|---|
 | `storageService.js` | All IndexedDB reads and writes via localForage. The only file that calls `localforage`. UI components never access storage directly. |
 | `aiService.js` | Abstraction over the AI backend. Currently returns mock responses. The real backend connection is a one-function swap. |
+| `encryptionService.js` | WebCrypto-based AES-GCM encryption. Implements passphrase setup, unlock, change, encrypt, and decrypt. See [integration-guide.md](integration-guide.md) for the full API. **Note:** the file is currently named `encryptionService.html` — it must be renamed to `encryptionService.js` before it can be imported. |
 
 ### `src/data/`
 
@@ -188,7 +200,7 @@ Tailwind CSS is the primary styling tool. Brand color tokens are defined in `tai
 ## Key Architectural Decisions
 
 **All storage goes through `storageService.js`.**
-UI components never call `localforage` directly. This single boundary allows the security teammate to add encryption inside the service module without touching any UI code.
+UI components never call `localforage` directly. This single boundary allows encryption to be added inside the service module without touching any UI code.
 
 **The prediction engine is a pure function.**
 `predictionEngine.js` has no React dependencies, no storage calls, and no network calls. It accepts data and returns results. This makes it independently testable and easy to reason about.
@@ -198,3 +210,6 @@ UI components never call `localforage` directly. This single boundary allows the
 
 **No direct server calls for health data.**
 The browser never transmits stored health records to any server. The only outbound network call is `aiService.js → POST /api/ask`, which carries only the user's typed question.
+
+**Encryption lives in `encryptionService.js`.**
+`PassphraseGate.jsx` handles the full-screen passphrase UI (first-run setup, returning-user unlock, change passphrase). It imports from `encryptionService.js`, which uses only `window.crypto.subtle` — no third-party libraries. The derived `CryptoKey` lives in memory only; it is never persisted.

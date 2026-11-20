@@ -10,75 +10,153 @@ Do not modify any file not listed in this document unless you have a specific re
 
 ### Overview
 
-The security implementation adds passphrase-derived encryption to the storage layer. The goal is to encrypt sensitive fields (free-text notes, height, weight) before writing to IndexedDB, and decrypt them after reading. **No UI component changes are needed** — all encryption lives inside `storageService.js`.
+The encryption layer is **already implemented**. The following files exist and are complete:
 
-### Prerequisites
+| File | Status |
+|---|---|
+| `src/services/encryptionService.html` | ✅ Complete — but has wrong file extension (see below) |
+| `src/components/PassphraseGate.jsx` | ✅ Complete — full-screen passphrase UI |
 
-- Familiarity with the [Web Crypto API](https://developer.mozilla.org/en-US/docs/Web/API/Web_Crypto_API) (built into every modern browser — no library needed).
-- Read [data-storage.md](data-storage.md) first to understand the storage schemas.
+> ⚠️ **File extension bug:** `src/services/encryptionService.html` must be **renamed to `encryptionService.js`** before anything will work. `PassphraseGate.jsx` imports it as `'../services/encryptionService.js'` — this import will fail until the file is renamed. No code changes are needed; only the filename.
 
-### Step 1 — Create `src/services/encryptionService.js`
+### What still needs to be done
 
-This new file implements three functions:
+The encryption service and passphrase UI are built, but they are **not yet wired into the app**. The following connections remain:
+
+1. **Connect `PassphraseGate` to `App.jsx`** — the gate is not currently rendered.
+2. **Add the session key to `EncryptionContext`** — so `storageService.js` can access it.
+3. **Call encrypt/decrypt in `storageService.js`** — at the marked integration points.
+4. **Add passphrase management UI to `SettingsPage.jsx`** — for change/clear passphrase.
+
+---
+
+### `encryptionService.js` API Reference
+
+**File:** `src/services/encryptionService.html` → rename to `encryptionService.js`
+
+#### `setupPassphrase(passphrase)`
+
+Called the first time a user creates a passphrase. Derives a key via PBKDF2, stores the random salt in IndexedDB, encrypts a sentinel value to verify future unlock attempts, and returns the `CryptoKey` for immediate use.
 
 ```js
-// Derive an AES-GCM key from a user passphrase using PBKDF2
-async function deriveKey(passphrase, salt)
-  // passphrase: string
-  // salt: Uint8Array (stored in UserPreferences.encryptionSalt)
-  // returns: CryptoKey
-
-// Encrypt a string field
-async function encrypt(plaintext, key)
-  // plaintext: string
-  // key: CryptoKey
-  // returns: string (base64-encoded ciphertext + IV)
-
-// Decrypt a string field
-async function decrypt(ciphertext, key)
-  // ciphertext: string (base64-encoded ciphertext + IV)
-  // key: CryptoKey
-  // returns: string
-  // throws if key is wrong or ciphertext is corrupt
+const key = await setupPassphrase('my-passphrase')
+// → CryptoKey (AES-GCM, 256-bit, non-extractable)
 ```
 
-Use `window.crypto.subtle` exclusively. Recommended algorithm: AES-GCM with a random IV per encryption call (128-bit or 256-bit key, PBKDF2 iterations ≥ 300,000).
+#### `unlockWithPassphrase(passphrase)`
 
-### Step 2 — Add passphrase storage to `UserPreferences`
-
-Update `DEFAULT_PREFERENCES` in `src/services/storageService.js`:
+For returning users. Reads the stored salt, derives the key, and verifies it by decrypting the sentinel. Returns the `CryptoKey` on success.
 
 ```js
-const DEFAULT_PREFERENCES = {
-  aiConsentGranted:  false,
-  themePreference:   'light',
-  passphraseSet:     false,   // ADD THIS
-  encryptionSalt:    null,    // ADD THIS — base64 Uint8Array
-}
+const key = await unlockWithPassphrase('my-passphrase')
+// → CryptoKey
+// throws Error('wrong_passphrase') if passphrase is incorrect
+// throws Error('not_set_up') if no passphrase has been set up yet
 ```
 
-### Step 3 — Add a passphrase prompt to `src/App.jsx`
+#### `isPassphraseSet()`
 
-On app load, check `getPreferences().passphraseSet`. If `true`, show a passphrase prompt modal before rendering any page content. Call `deriveKey(passphrase, salt)` and store the resulting `CryptoKey` in a React context:
+Returns `true` if a passphrase salt exists in IndexedDB (i.e., the user has previously set up encryption).
 
 ```js
-// Create src/contexts/EncryptionContext.js
+const hasPassphrase = await isPassphraseSet()
+// → boolean
+```
+
+#### `changePassphrase(currentKey, newPassphrase, reEncryptFn)`
+
+Re-derives a new key from `newPassphrase`, calls `reEncryptFn(oldKey, newKey)` so the caller can re-encrypt all stored data, then updates the stored salt and sentinel.
+
+```js
+const newKey = await changePassphrase(currentKey, 'new-passphrase', async (old, next) => {
+  // re-encrypt all stored notes fields with old key → new key
+})
+// → CryptoKey (the new key)
+```
+
+#### `encrypt(plaintext, key)`
+
+Encrypts a string (or any JSON-serialisable value) with AES-GCM. Generates a fresh random 12-byte IV per call.
+
+```js
+const cipherObj = await encrypt('my notes text', key)
+// → { iv: 'base64...', data: 'base64...' }
+```
+
+#### `decrypt(cipherObj, key)`
+
+Decrypts a `{ iv, data }` object back to the original string.
+
+```js
+const plaintext = await decrypt(cipherObj, key)
+// → 'my notes text'
+// throws on wrong key or corrupt data
+```
+
+---
+
+### Cryptographic parameters
+
+| Parameter | Value |
+|---|---|
+| Key derivation | PBKDF2 with SHA-256 |
+| Iterations | 310,000 (OWASP 2023 recommendation) |
+| Salt | 16 bytes, random, stored in IndexedDB under `__enc_salt__` |
+| Key length | 256-bit AES-GCM |
+| IV | 12 bytes, random per encryption call |
+| Key extractability | Non-extractable (`extractable: false`) |
+| Passphrase verification | Sentinel value (`'menstrual-health-app-ok'`) encrypted on setup and decrypted on unlock |
+
+---
+
+### Step 1 — Rename the file
+
+```powershell
+Rename-Item frontend\src\services\encryptionService.html encryptionService.js
+```
+
+---
+
+### Step 2 — Create `src/contexts/EncryptionContext.js`
+
+```js
+import { createContext } from 'react'
 export const EncryptionContext = createContext(null)
 // Provider value: { key: CryptoKey | null }
 ```
 
-Wrap the router in `<EncryptionContext.Provider value={{ key }}>` in `App.jsx`. If the user dismisses the prompt without entering a passphrase, `key` is `null` — encrypted fields will be unreadable that session, displayed as a locked indicator.
+---
 
-### Step 4 — Add encryption at the marked points in `storageService.js`
+### Step 3 — Wire `PassphraseGate` into `App.jsx`
 
-Every save and get function already contains integration comments:
+On app load, check `isPassphraseSet()`. If true, render `PassphraseGate` in `'unlock'` mode. If false (first run), render it in `'setup'` mode. Once the user provides the passphrase, call the appropriate function and store the resulting `CryptoKey` in `EncryptionContext`.
+
+```jsx
+import PassphraseGate from './components/PassphraseGate'
+import { isPassphraseSet } from './services/encryptionService'
+import { EncryptionContext } from './contexts/EncryptionContext'
+
+// In App:
+// 1. On mount, check isPassphraseSet() → set mode to 'setup' or 'unlock'
+// 2. Show PassphraseGate until key is provided
+// 3. Store key in EncryptionContext.Provider value
+// 4. Render the router only after key is available
+```
+
+The `onWipe` prop of `PassphraseGate` (unlock mode) should call `clearAllData()` from `storageService.js`.
+
+---
+
+### Step 4 — Add encryption calls in `storageService.js`
+
+Each save and get function already has integration comments:
 
 ```js
 // ENCRYPT BEFORE WRITE   ← add:  field = await encrypt(field, key)
 // DECRYPT AFTER READ     ← add:  field = await decrypt(field, key)
 ```
 
-Import `encrypt` and `decrypt` from `encryptionService.js`. Import the session key from `EncryptionContext`. Apply encryption to:
+Import `encrypt` and `decrypt` from `encryptionService.js`. Read the session key from `EncryptionContext`. Apply to these fields:
 
 | Function | Field to encrypt/decrypt |
 |---|---|
@@ -91,32 +169,38 @@ Import `encrypt` and `decrypt` from `encryptionService.js`. Import the session k
 | `saveHealthProfile` | `partial.heightCm`, `partial.weightKg` |
 | `getHealthProfile` | `profile.heightCm`, `profile.weightKg` |
 
-### Step 5 — Add passphrase management UI to `src/pages/SettingsPage.jsx`
+---
 
-Add a passphrase setup/change/clear UI inside the existing "Privacy & security" card. The card currently shows a placeholder notice — replace or supplement that notice with your controls.
+### Step 5 — Add passphrase management UI to `SettingsPage.jsx`
 
-The passphrase management component should:
-- Allow setting a passphrase for the first time (generate a random salt, store in `UserPreferences`).
-- Allow changing the passphrase (re-derive key with new passphrase, re-encrypt all notes).
-- Allow clearing the passphrase (decrypt all notes, remove salt, set `passphraseSet: false`).
-- Show a clear warning that a lost passphrase means encrypted notes are permanently unrecoverable.
+The existing "Privacy & security" card shows a placeholder notice. Replace it with real controls:
+
+- **If no passphrase is set:** show a "Set up encryption" button that opens `PassphraseGate` in `'setup'` mode (can be rendered inline or as a modal).
+- **If a passphrase is set:** show the `ChangePassphraseForm` exported from `PassphraseGate.jsx`.
+- Always show a warning: *"A lost passphrase cannot be recovered. Encrypted notes will be permanently unreadable."*
+
+The `ChangePassphraseForm` calls `onDone({ currentPassphrase, newPassphrase })`. The Settings page handler should call `changePassphrase(currentKey, newPassphrase, reEncryptFn)` from `encryptionService.js`.
+
+---
+
+### Step 6 — Update the security notices
+
+Once encryption is active, update the yellow banners in `LogPage.jsx` and `SettingsPage.jsx`. They currently say:
+
+> *"Security features are not yet active. All stored data is currently unencrypted."*
+
+Replace with an accurate description of what is encrypted (notes, height, weight) and what is not (dates, scores, booleans).
+
+---
 
 ### What the security teammate must not change
 
 | File | Constraint |
 |---|---|
 | All `storageService.js` function signatures | Must remain identical — hooks and pages depend on them |
-| All page and component files | Should not need changes |
+| All page and component files (except `SettingsPage.jsx` for the passphrase UI) | Should not need changes |
 | `predictionEngine.js` | Must not be touched |
 | `aiService.js` | Must not be touched |
-
-### Existing security limitations to document
-
-When encryption is active, update the security notices in `LogPage.jsx` and `SettingsPage.jsx` to reflect the actual state. Currently they say:
-
-> *"Security features are not yet active. All stored data is currently unencrypted."*
-
-Replace this with an accurate description of what is and is not encrypted once encryption is implemented.
 
 ---
 
@@ -124,67 +208,44 @@ Replace this with an accurate description of what is and is not encrypted once e
 
 ### Overview
 
-The AI chatbot UI is complete. Connecting the real IBM watsonx backend requires:
-1. Building and deploying the Python/FastAPI backend.
-2. Replacing a single mock function body in the frontend.
+The AI backend is **already built and working**. The following exist and are complete:
 
-The chat UI, consent flow, error handling, source citation display, and disclaimer rendering all work already.
+| File | Status |
+|---|---|
+| `backend/server.py` | ✅ Complete — FastAPI server with rate limiting, CORS, retry logic |
+| `backend/agents/supervisor_agent.py` | ✅ Complete — multi-turn routing with follow-up detection |
+| `backend/agents/health_agent.py` | ✅ Complete — ~900-line menstrual health knowledge base |
+| `backend/agents/policy_agent.py` | ✅ Complete — privacy/data-policy question handler |
+
+See [backend.md](backend.md) for full backend documentation.
+
+### What still needs to be done
+
+The backend works against **Ollama** (a local LLM runtime). To connect it to IBM watsonx:
+1. Swap the LLM client base URL and credentials in `server.py` and the agent files.
+2. Set `VITE_BACKEND_URL` in `frontend/.env` to point to the deployed backend.
+3. Replace the mock in `src/services/aiService.js` with a real fetch call.
+
+---
 
 ### The frontend AI service
 
-**File:** `src/services/aiService.js`  
+**File:** `src/services/aiService.js`
 **Export:** `async function askQuestion(question)`
 
 The function currently contains a mock implementation that returns a canned response after a 1-second delay. The entire real integration is a replacement of this body.
 
-### Step 1 — Build and deploy the FastAPI backend
-
-The backend does not yet exist. Create a Python/FastAPI application with one route:
-
-**`POST /api/ask`**
-
-Request body:
-```json
-{ "question": "string" }
-```
-
-Response (HTTP 200):
-```json
-{
-  "answer": "string",
-  "sources": [
-    { "title": "string", "url": "string" }
-  ]
-}
-```
-
-`sources` may be an empty array. The backend must:
-- Hold IBM API credentials in server-side environment variables — never in the frontend.
-- Validate that `question` is non-empty and does not exceed 500 characters.
-- Implement rate limiting (recommended: 10 requests per IP per minute).
-- Not log the content of user questions.
-- Return appropriate HTTP error status codes on failure (400 for validation, 429 for rate limit, 5xx for server errors).
-
-The frontend maps error status codes to user-facing messages in `ChatPanel.jsx`:
-
-| Status | Shown to user |
-|---|---|
-| 400 | "Your question could not be processed. Please rephrase and try again." |
-| 429 | "Too many requests. Please wait a moment before asking another question." |
-| 5xx | "The assistant is temporarily unavailable. Please try again later." |
-| Network failure | "Could not reach the assistant. Check your connection and try again." |
-
-### Step 2 — Set the backend URL
+### Step 1 — Set the backend URL
 
 Create `frontend/.env` from `frontend/.env.example`:
 
 ```
-VITE_BACKEND_URL=https://your-backend.ibmcloud.com
+VITE_BACKEND_URL=http://localhost:8000
 ```
 
 This value is embedded in the frontend build. It is a configuration value, not a secret.
 
-### Step 3 — Replace the mock in `aiService.js`
+### Step 2 — Replace the mock in `aiService.js`
 
 In `src/services/aiService.js`, find the mock block (clearly labeled `// ── Mock implementation`) and replace it with:
 
@@ -203,7 +264,7 @@ return await res.json()
 
 **That is the entire frontend change.** No component files need to be modified.
 
-### Step 4 — Replace the health topic content
+### Step 3 — Replace the health topic content
 
 **File:** `src/data/healthTopics.js`
 
@@ -244,16 +305,23 @@ Before `askQuestion` is called, `ConsentGate.jsx` checks whether `aiConsentGrant
 
 ```
 Files to modify:
+  src/services/encryptionService.html     ← RENAME TO encryptionService.js (no code changes needed)
+  src/App.jsx                             ← security: wire PassphraseGate on startup
   src/services/storageService.js          ← security: add encrypt/decrypt calls
-  src/pages/SettingsPage.jsx              ← security: add passphrase UI
+  src/pages/SettingsPage.jsx              ← security: add passphrase management UI
   src/services/aiService.js               ← AI: replace mock with fetch()
   src/data/healthTopics.js               ← AI/content: replace with reviewed topics
   frontend/.env                           ← AI: set VITE_BACKEND_URL
 
 Files to create:
-  src/services/encryptionService.js       ← security: PBKDF2 + AES-GCM
   src/contexts/EncryptionContext.js       ← security: session key context
-  backend/                               ← AI: new Python FastAPI application
+
+Files already built (no changes needed unless connecting to IBM watsonx):
+  src/components/PassphraseGate.jsx       ← full-screen passphrase UI
+  backend/server.py                       ← FastAPI HTTP bridge
+  backend/agents/supervisor_agent.py      ← routing agent
+  backend/agents/health_agent.py          ← health knowledge base
+  backend/agents/policy_agent.py          ← policy knowledge base
 
 Files to leave unchanged:
   src/logic/predictionEngine.js

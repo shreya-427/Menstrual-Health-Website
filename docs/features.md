@@ -253,7 +253,7 @@ The settings page has five sections:
 |---|---|---|
 | Appearance | Complete | Theme is toggled via the NavBar button; this section just explains it |
 | Personal health profile | Complete | Optional age, height, weight, activity level |
-| Privacy & security | Placeholder | Encryption notice + data storage explanation |
+| Privacy & security | Partial | Passphrase setup/change/clear UI — encryption service is built but not yet wired into the app |
 | AI health assistant | Complete | Consent toggle with modal |
 | Your data | Complete | Export to JSON, delete all data (two-step) |
 | Developer tools | Dev only | "Load demo data" button (hidden in production) |
@@ -282,6 +282,28 @@ An optional form with four fields:
 5. The Education page's `ConsentGate` now renders `ChatPanel` instead of the disabled stub.
 
 Disabling consent works immediately (no modal). `savePreferences({ aiConsentGranted: false })` is called and the Education page reverts to the disabled stub on next load.
+
+### Passphrase and encryption
+
+**File:** `src/components/PassphraseGate.jsx`
+
+`PassphraseGate` is a full-screen overlay that appears before the app renders. It has three modes:
+
+| Mode | When shown | What it does |
+|---|---|---|
+| `'setup'` | First run — no passphrase set yet | User chooses and confirms a passphrase; calls `setupPassphrase()` |
+| `'unlock'` | Returning user — passphrase previously set | User enters passphrase; calls `unlockWithPassphrase()` |
+| `'change'` | Rendered inline in Settings | User enters current and new passphrase; calls `changePassphrase()` |
+
+**Current status:** `PassphraseGate` and the underlying `encryptionService.js` are fully built, but `PassphraseGate` is not currently rendered by `App.jsx`. The app starts directly without prompting for a passphrase. See [integration-guide.md](integration-guide.md) for the remaining wiring steps.
+
+The `'change'` mode is exposed as a named export `ChangePassphraseForm` from `PassphraseGate.jsx` and is intended to be embedded in the Privacy & security card in Settings once encryption is fully wired.
+
+**Passphrase strength meter:** The setup form shows a five-segment strength bar that evaluates length (≥8 and ≥12 characters), presence of uppercase letters, digits, and special characters.
+
+**Forgot passphrase:** In unlock mode, a "Forgot passphrase — wipe data" link triggers a two-step confirmation that calls `clearAllData()`. There is no password reset — a lost passphrase means encrypted data is permanently unrecoverable.
+
+---
 
 ### Data export
 

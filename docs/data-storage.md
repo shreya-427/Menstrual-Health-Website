@@ -26,7 +26,7 @@ This design gives the security teammate a single, well-defined boundary for addi
 
 ### Storage keys
 
-All data is stored under four keys in the same localForage instance:
+All data is stored under six keys in the same localForage instance:
 
 | Constant | Key string | Contents |
 |---|---|---|
@@ -34,6 +34,10 @@ All data is stored under four keys in the same localForage instance:
 | `KEYS.SYMPTOM_LOGS` | `'symptomLogs'` | Array of SymptomLog objects |
 | `KEYS.PREFERENCES` | `'userPreferences'` | Single UserPreferences object |
 | `KEYS.HEALTH_PROFILE` | `'healthProfile'` | Single HealthProfile object |
+| *(encryption)* | `'__enc_salt__'` | Base64 PBKDF2 salt — written by `encryptionService.js`, not `storageService.js` |
+| *(encryption)* | `'__enc_sentinel__'` | Encrypted sentinel object — used to verify the passphrase on unlock |
+
+The two encryption keys are managed exclusively by `src/services/encryptionService.js`. They are not exposed through `storageService.js` and are not included in data exports or bulk deletion. `clearAllData()` removes only the four health data keys.
 
 ---
 
@@ -81,7 +85,9 @@ A single object (not an array).
 | `aiConsentGranted` | `boolean` | `false` | Whether the user has consented to AI chat |
 | `themePreference` | `'light' \| 'dark'` | `'light'` | Stored here but the theme hook uses `localStorage` directly; these may diverge |
 
-> **Note on theme storage:** `useTheme.js` reads from `localStorage` for faster first-load. `UserPreferences.themePreference` is not currently read on startup — the theme hook's `localStorage` value takes precedence. This is a minor inconsistency the security teammate may wish to reconcile.
+> **Note on theme storage:** `useTheme.js` reads from `localStorage` for faster first-load. `UserPreferences.themePreference` is not currently read on startup — the theme hook's `localStorage` value takes precedence. This is a minor inconsistency that may be reconciled when encryption is wired up.
+
+> **Note on passphrase state:** Passphrase setup state is tracked via the presence of `__enc_salt__` in IndexedDB (checked by `isPassphraseSet()` from `encryptionService.js`), not via a field in `UserPreferences`. The `passphraseSet` and `encryptionSalt` fields described in `frontend/INTEGRATION.md` have not been added to `DEFAULT_PREFERENCES` yet — they should be added when encryption is wired into `storageService.js`.
 
 ### HealthProfile
 
@@ -174,7 +180,11 @@ The fields that should be encrypted are:
 - `HealthProfile.heightCm`
 - `HealthProfile.weightKg`
 
-The structured numeric fields (dates, severity scores, mood values) are stored as plain text. The security teammate may choose to encrypt additional fields if desired — the comment markers indicate the appropriate hook-in points.
+The structured numeric fields (dates, severity scores, mood values) are stored as plain text.
+
+**Current status:** The encryption service (`encryptionService.js`) and passphrase UI (`PassphraseGate.jsx`) are built, but the calls at these integration points have not yet been added. See [integration-guide.md](integration-guide.md) for the remaining wiring steps.
+
+> ⚠️ `encryptionService.js` is currently saved as `encryptionService.html` — it must be renamed before it can be imported.
 
 ---
 

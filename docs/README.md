@@ -11,6 +11,7 @@ This is the technical documentation index for the menstrual health website. The 
 | [prediction-engine.md](prediction-engine.md) | Statistical cycle prediction algorithm in detail |
 | [data-storage.md](data-storage.md) | Data schemas, storage service API, export and deletion |
 | [integration-guide.md](integration-guide.md) | Security and AI backend integration instructions |
+| [backend.md](backend.md) | Backend server, three-agent pipeline, API contract, dev tools |
 
 ---
 
@@ -33,6 +34,8 @@ A web-based menstrual health tracker that lets users log periods and symptoms, v
 
 ## Technology Stack
 
+### Frontend
+
 | Technology | Version | Role |
 |---|---|---|
 | React | 18.3.1 | UI framework |
@@ -42,8 +45,21 @@ A web-based menstrual health tracker that lets users log periods and symptoms, v
 | localForage | 1.10.x | IndexedDB abstraction for local storage |
 | date-fns | 3.6.x | Date arithmetic |
 | Recharts | 2.12.x | Statistical charts on Insights page |
+| react-markdown | 10.1.x | Renders health topic article content |
 
-No backend framework, database, or server is used for health data. The only backend interaction is the AI chat feature, which is currently mocked.
+No backend framework, database, or server is used for health data. The only backend interaction is the AI chat feature.
+
+### Backend
+
+| Technology | Version | Role |
+|---|---|---|
+| Python | 3.10+ | Language |
+| FastAPI | 0.110+ | HTTP framework |
+| Uvicorn | 0.29+ | ASGI server |
+| OpenAI SDK | 1.30+ | LLM client (Ollama-compatible) |
+| Ollama | — | Local LLM runtime (llama3.2 model) |
+
+The backend currently uses Ollama locally. It is not yet connected to IBM watsonx. See [backend.md](backend.md) for setup instructions.
 
 ---
 
@@ -93,8 +109,9 @@ This is used by the AI chat service. It has no effect until the real backend is 
 
 | Limitation | Detail |
 |---|---|
-| **No encryption** | All health data in IndexedDB is stored as plain text. Anyone with access to the browser profile can read it. The security teammate has not yet implemented encryption. |
-| **AI chat is mocked** | The chatbot returns a canned placeholder response. The IBM watsonx backend has not been connected. |
+| **Encryption not wired up** | `encryptionService.js` and `PassphraseGate.jsx` are built but not yet connected to the app. All health data in IndexedDB is currently stored as plain text. See [integration-guide.md](integration-guide.md). |
+| **`encryptionService.html` filename bug** | The encryption service file has the wrong extension (`.html` instead of `.js`). It must be renamed before it can be imported. |
+| **AI chat is mocked** | The chatbot returns a canned placeholder response. The backend server and agents are built (using Ollama locally), but the frontend mock has not been swapped to the real connection yet. |
 | **Educational content is placeholder** | The health topic articles were written as representative examples. They have not been formally reviewed by a medical professional. |
 | **No server backup** | All data lives in the browser. Clearing browser storage or losing the device means permanent data loss. |
 | **Prediction not clinically validated** | The statistical algorithm has not been validated against clinical data. It is a transparent mathematical model, not a medical prediction tool. |
